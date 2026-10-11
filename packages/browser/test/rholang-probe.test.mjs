@@ -91,6 +91,14 @@ const row = (peer, overrides = {}) => ({
 }
 
 {
+  const duplicate = row("node-a");
+  const a = assessRnodeAttestations([duplicate, { ...duplicate }, row("node-b")]);
+  check("perspectives count distinct peers rather than rows",
+    a.status === "AGREEMENT" && a.perspectives === 2,
+    JSON.stringify(a));
+}
+
+{
   const a = assessRnodeAttestations([
     row("node-a"),
     row("node-a", { postStateHash: "post-B" }),
@@ -122,6 +130,116 @@ const row = (peer, overrides = {}) => ({
     a.status === "INCONCLUSIVE"
       && a.perspectives === 1
       && a.blockers.some((b) => b.includes("malformed")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([null, row("node-a"), row("node-b")]);
+  check("non-object attestation is omitted instead of throwing",
+    a.status === "INCONCLUSIVE"
+      && a.blockers.some((b) => b.includes("malformed")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-b", { postStateHash: "post-B" }),
+    null,
+  ]);
+  check("valid divergence dominates one malformed attestation",
+    a.status === "FALSIFIED"
+      && a.falsifiers.some((f) => f.kind === "post-state-divergence")
+      && a.blockers.some((b) => b.includes("malformed")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-b", { postStateHash: "post-B" }),
+    row("node-c", { preStateHash: "pre-B", postStateHash: "post-C" }),
+  ]);
+  check("divergence in one input cohort survives an unrelated cohort",
+    a.status === "FALSIFIED"
+      && a.preStateHash === "pre-A"
+      && a.perspectives === 2
+      && a.falsifiers.some((f) => f.kind === "post-state-divergence")
+      && a.blockers.some((b) => b.includes("pre-state")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-a", { result: "2" }),
+    null,
+  ]);
+  check("peer equivocation dominates unrelated malformed evidence",
+    a.status === "FALSIFIED"
+      && a.falsifiers.some((f) => f.kind === "peer-equivocation")
+      && a.blockers.some((b) => b.includes("malformed")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-b", { postStateHash: "post-B" }),
+    row("node-c"),
+    row("node-d", { preStateHash: "pre-B", postStateHash: "post-D" }),
+  ]);
+  check("fourth-peer off-input injection cannot hide honest divergence",
+    a.status === "FALSIFIED"
+      && a.preStateHash === "pre-A"
+      && a.perspectives === 3
+      && a.falsifiers.some((f) => f.kind === "post-state-divergence"),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    null,
+    { peer: "node-a", program: "", preStateHash: "", postStateHash: "", result: "" },
+  ]);
+  check("malformed-only evidence remains inconclusive",
+    a.status === "INCONCLUSIVE"
+      && a.falsifiers.length === 0
+      && a.blockers.some((b) => b.includes("malformed")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-b"),
+    row("node-c", { preStateHash: "pre-B", postStateHash: "post-B" }),
+    row("node-d", { preStateHash: "pre-B", postStateHash: "post-B" }),
+  ]);
+  check("separate agreeing input cohorts remain inconclusive overall",
+    a.status === "INCONCLUSIVE"
+      && a.falsifiers.length === 0
+      && a.blockers.some((b) => b.includes("pre-state")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([row("node-a"), row("node-b")], 1);
+  check("invalid minimum perspective configuration blocks agreement",
+    a.status === "INCONCLUSIVE"
+      && a.blockers.some((b) => b.includes("minPerspectives")),
+    JSON.stringify(a));
+}
+
+{
+  const a = assessRnodeAttestations([
+    row("node-a"),
+    row("node-b", { postStateHash: "post-B" }),
+  ], 1);
+  check("invalid minimum perspective configuration cannot suppress falsifier",
+    a.status === "FALSIFIED"
+      && a.falsifiers.some((f) => f.kind === "post-state-divergence")
+      && a.blockers.some((b) => b.includes("minPerspectives")),
     JSON.stringify(a));
 }
 

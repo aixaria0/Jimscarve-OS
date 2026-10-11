@@ -27,6 +27,8 @@ export interface ValueBucket {
 
 export interface RholangFalsifier {
   kind: "peer-equivocation" | "post-state-divergence" | "result-divergence";
+  program?: string;
+  preStateHash?: string;
   peer?: string;
   observations?: RnodeAttestation[];
   values?: ValueBucket[];
@@ -44,10 +46,20 @@ export interface RholangProbeAssessment {
   falsifiers: RholangFalsifier[];
 }
 
-function complete(a: RnodeAttestation): boolean {
-  return [a.peer, a.program, a.preStateHash, a.postStateHash]
+interface ComparableCohort {
+  key: string;
+  program: string;
+  preStateHash: string;
+  rows: RnodeAttestation[];
+  peers: string[];
+}
+
+function complete(a: unknown): a is RnodeAttestation {
+  if (typeof a !== "object" || a === null) return false;
+  const candidate = a as Partial<RnodeAttestation>;
+  return [candidate.peer, candidate.program, candidate.preStateHash, candidate.postStateHash]
     .every((v) => typeof v === "string" && v.length > 0)
-    && typeof a.result === "string";
+    && typeof candidate.result === "string";
 }
 
 function sameAttestation(a: RnodeAttestation, b: RnodeAttestation): boolean {
@@ -69,6 +81,10 @@ function buckets(rows: RnodeAttestation[], pick: (a: RnodeAttestation) => string
   return [...grouped.entries()].map(([value, peers]) => ({ value, peers }));
 }
 
+function cohortKey(program: string, preStateHash: string): string {
+  return JSON.stringify([program, preStateHash]);
+}
+
 export function assessRnodeAttestations(
   input: RnodeAttestation[],
   minPerspectives = 2,
@@ -76,9 +92,9 @@ export function assessRnodeAttestations(
   const blockers: string[] = [];
   const falsifiers: RholangFalsifier[] = [];
 
-  if (!Number.isInteger(minPerspectives) || minPerspectives < 2) {
+  const validMinPerspectives = Number.isInteger(minPerspectives) && minPerspectives >= 2;
+  if (!validMinPerspectives) {
     blockers.push("minPerspectives must be an integer >= 2");
-    minPerspectives = 2;
   }
 
   const malformed = input.filter((a) => !complete(a));
@@ -91,7 +107,7 @@ export function assessRnodeAttestations(
     if (!rows.some((existing) => sameAttestation(existing, a))) rows.push(a);
   }
 
-  const peers = [...new Set(rows.map((a) => a.peer))];
+  const allPeers = [...new Set(rows.map((a) => a.peer))];
   const programs = [...new Set(rows.map((a) => a.program))];
   const preStates = [...new Set(rows.map((a) => a.preStateHash))];
 
@@ -102,11 +118,116 @@ export function assessRnodeAttestations(
     blockers.push("attestations do not share the same pre-state");
   }
 
-  if (blockers.length > 0) {
+  const grouped = new Map<string, RnodeAttestation[]>();
+  for (const row of rows) {
+    const key = cohortKey(row.program, row.preStateHash);
+    const cohortRows = grouped.get(key) ?? [];
+    cohortRows.push(row);
+    grouped.set(key, cohortRows);
+  }
+
+  const cohorts: ComparableCohort[] = [...grouped.entries()].map(([key, cohortRows]) => ({
+    key,
+    program: cohortRows[0].program,
+    preStateHash: cohortRows[0].preStateHash,
+    rows: cohortRows,
+    peers: [...new Set(cohortRows.map((row) => row.peer))],
+  }));
+
+  const falsifiedCohorts: ComparableCohort[] = [];
+
+  for (const cohort of cohorts) {
+    const before = falsifiers.length;
+    const byPeer = new Map<string, RnodeAttestation[]>();
+
+    for (const row of cohort.rows) {
+      const peerRows = byPeer.get(row.peer) ?? [];
+      peerRows.push(row);
+      byPeer.set(row.peer, peerRows);
+    }
+
+    for (const [peer, peerRows] of byPeer) {
+      if (peerRows.length > 1) {
+        falsifiers.push({
+          kind: "peer-equivocation",
+          program: cohort.program,
+          preStateHash: cohort.preStateHash,
+          peer,
+          observations: peerRows,
+        });
+      }
+    }
+
+    // Cross-peer divergence is evaluated only across peers that supplied one
+    // unambiguous attestation in this comparable input context. Equivocating
+    // peers are already explicit falsifiers and cannot steer the buckets.
+    const stableRows = [...byPeer.values()]
+      .filter((peerRows) => peerRows.length === 1)
+      .map((peerRows) => peerRows[0]);
+
+    const postStates = buckets(stableRows, (a) => a.postStateHash);
+    const results = buckets(stableRows, (a) => a.result);
+
+    if (postStates.length > 1) {
+      falsifiers.push({
+        kind: "post-state-divergence",
+        program: cohort.program,
+        preStateHash: cohort.preStateHash,
+        values: postStates,
+      });
+    }
+    if (results.length > 1) {
+      falsifiers.push({
+        kind: "result-divergence",
+        program: cohort.program,
+        preStateHash: cohort.preStateHash,
+        values: results,
+      });
+    }
+
+    if (falsifiers.length > before) falsifiedCohorts.push(cohort);
+  }
+
+  // Explicit same-input contradiction dominates unrelated malformed or
+  // non-comparable evidence. Those observations remain visible in blockers,
+  // but cannot dilute a valid falsifier into INCONCLUSIVE.
+  if (falsifiers.length > 0) {
+    const context = falsifiedCohorts.length === 1 ? falsifiedCohorts[0] : null;
+    const peers = context?.peers ?? allPeers;
     return {
-      status: "INCONCLUSIVE",
+      status: "FALSIFIED",
       perspectives: peers.length,
       peers,
+      program: context?.program ?? null,
+      preStateHash: context?.preStateHash ?? null,
+      blockers,
+      falsifiers,
+    };
+  }
+
+  if (cohorts.length === 0) {
+    if (validMinPerspectives) {
+      blockers.push(`need at least ${minPerspectives} distinct rnode perspectives; got 0`);
+    }
+    return {
+      status: "INCONCLUSIVE",
+      perspectives: 0,
+      peers: [],
+      program: null,
+      preStateHash: null,
+      blockers,
+      falsifiers,
+    };
+  }
+
+  // Malformed evidence, invalid configuration, or multiple input contexts may
+  // block bounded agreement, but only after all comparable cohorts have been
+  // checked for stronger falsifier evidence above.
+  if (blockers.length > 0 || cohorts.length !== 1) {
+    return {
+      status: "INCONCLUSIVE",
+      perspectives: allPeers.length,
+      peers: allPeers,
       program: programs.length === 1 ? programs[0] : null,
       preStateHash: preStates.length === 1 ? preStates[0] : null,
       blockers,
@@ -114,75 +235,34 @@ export function assessRnodeAttestations(
     };
   }
 
-  const byPeer = new Map<string, RnodeAttestation[]>();
-  for (const a of rows) {
-    const peerRows = byPeer.get(a.peer) ?? [];
-    peerRows.push(a);
-    byPeer.set(a.peer, peerRows);
-  }
-
-  for (const [peer, peerRows] of byPeer) {
-    if (peerRows.length > 1) {
-      falsifiers.push({ kind: "peer-equivocation", peer, observations: peerRows });
-    }
-  }
-
-  if (falsifiers.length > 0) {
-    return {
-      status: "FALSIFIED",
-      perspectives: peers.length,
-      peers,
-      program: programs[0] ?? null,
-      preStateHash: preStates[0] ?? null,
-      blockers,
-      falsifiers,
-    };
-  }
-
-  if (peers.length < minPerspectives) {
+  const cohort = cohorts[0];
+  if (cohort.peers.length < minPerspectives) {
     blockers.push(
-      `need at least ${minPerspectives} distinct rnode perspectives; got ${peers.length}`,
+      `need at least ${minPerspectives} distinct rnode perspectives; got ${cohort.peers.length}`,
     );
     return {
       status: "INCONCLUSIVE",
-      perspectives: peers.length,
-      peers,
-      program: programs[0] ?? null,
-      preStateHash: preStates[0] ?? null,
+      perspectives: cohort.peers.length,
+      peers: cohort.peers,
+      program: cohort.program,
+      preStateHash: cohort.preStateHash,
       blockers,
       falsifiers,
     };
   }
 
-  const onePerPeer = [...byPeer.values()].map((peerRows) => peerRows[0]);
+  const byPeer = new Map<string, RnodeAttestation>();
+  for (const row of cohort.rows) byPeer.set(row.peer, row);
+  const onePerPeer = [...byPeer.values()];
   const postStates = buckets(onePerPeer, (a) => a.postStateHash);
   const results = buckets(onePerPeer, (a) => a.result);
 
-  if (postStates.length > 1) {
-    falsifiers.push({ kind: "post-state-divergence", values: postStates });
-  }
-  if (results.length > 1) {
-    falsifiers.push({ kind: "result-divergence", values: results });
-  }
-
-  if (falsifiers.length > 0) {
-    return {
-      status: "FALSIFIED",
-      perspectives: rows.length,
-      peers,
-      program: programs[0],
-      preStateHash: preStates[0],
-      blockers,
-      falsifiers,
-    };
-  }
-
   return {
     status: "AGREEMENT",
-    perspectives: rows.length,
-    peers,
-    program: programs[0],
-    preStateHash: preStates[0],
+    perspectives: cohort.peers.length,
+    peers: cohort.peers,
+    program: cohort.program,
+    preStateHash: cohort.preStateHash,
     postStateHash: postStates[0].value,
     result: results[0].value,
     blockers,
