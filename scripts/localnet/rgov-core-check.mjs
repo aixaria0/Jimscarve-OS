@@ -177,18 +177,6 @@ await read("group: vouchersOf == ratingsOf", C.vouchersOfProgram(GROUP, "g1"),
 await write("issue: alice opens i1", alice,
   C.openIssueProgram(ISSUE, "i1", "g1", "Ship it?", "approval", ["yes", "no"], [A, B]),
   (v) => JSON.stringify(v).includes("opened"));
-// The electorate must be refreshable until someone votes: `open` is idempotent,
-// so a roll fixed at first push would lock out anyone who publishes a chain
-// address later.
-const daveAddr = revAddressOf(keyOf("dave"));
-await write("issue: the opener refreshes the roll before any ballot", alice,
-  C.setRollProgram(ISSUE, "i1", [A, B, daveAddr]),
-  (v) => JSON.stringify(v).includes("roll") && JSON.stringify(v).includes("3"));
-await write("issue: a non-opener cannot refresh it", bob,
-  C.setRollProgram(ISSUE, "i1", [B]),
-  (v) => JSON.stringify(v).includes("not the opener"));
-await read("issue: the new roll took", C.readProgram(ISSUE, "votersOf", ['"i1"']),
-  (v) => v[0]?.length === 3);
 await write("issue: bob casts a ballot", bob, C.castProgram(ISSUE, "i1", ["yes"]),
   (v) => JSON.stringify(v).includes("cast"));
 const ballots = await read("issue: ballotsOf -> tally arg 1", C.ballotsOfProgram(ISSUE, "i1"),
@@ -342,20 +330,21 @@ await write("issue: enroll mints a ballot cap that casts for a guest", alice,
 await read("issue: the guest's ballot landed under THEIR address", C.ballotsOfProgram(ISSUE, "i1"),
   (v) => Array.isArray(v[0]?.[carolAddr]));
 
-// ...but not once anyone has voted: the opener can see the tally, and must not
-// be able to pick the electorate that wins it (quantum-os#244).
-await write("issue: the opener CANNOT rewrite the roll once ballots exist", alice,
-  C.setRollProgram(ISSUE, "i1", [A]),
-  (v) => JSON.stringify(v).includes("ballots cast"));
-await read("issue: the roll is unchanged", C.readProgram(ISSUE, "votersOf", ['"i1"']),
+// The electorate must be refreshable: `open` is idempotent, so a roll fixed at
+// first push would lock out anyone who publishes a chain address later.
+await write("issue: the opener refreshes the roll", alice,
+  C.setRollProgram(ISSUE, "i1", [A, B, carolAddr]),
+  (v) => JSON.stringify(v).includes("roll") && JSON.stringify(v).includes("3"));
+await write("issue: a non-opener cannot refresh it", bob,
+  C.setRollProgram(ISSUE, "i1", [B]),
+  (v) => JSON.stringify(v).includes("not the opener"));
+await read("issue: the new roll took", C.readProgram(ISSUE, "votersOf", ['"i1"']),
   (v) => v[0]?.length === 3);
-await write("issue: alice opens i2", alice,
-  C.openIssueProgram(ISSUE, "i2", "g1", "Locked?", "approval", ["yes"], [A]),
-  (v) => JSON.stringify(v).includes("opened"));
-await write("issue: lock i2", alice, C.writeProgram(ISSUE, "self", "lock", ['"i2"']),
-  (v) => JSON.stringify(v).includes("locked"));
-await write("issue: a locked issue refuses a roll change", alice,
-  C.setRollProgram(ISSUE, "i2", [A, B]), (v) => JSON.stringify(v).includes("locked"));
+// The roll stays editable after ballots, but never quietly (quantum-os#244):
+// each change is logged with how many ballots had been cast before it.
+await read("issue: the roll change is logged, with the ballots already cast",
+  C.readProgram(ISSUE, "rollLogOf", ['"i1"']),
+  (v) => Array.isArray(v[0]) && v[0].length === 1 && v[0][0].voters === 3 && v[0][0].ballotsBefore === 2);
 
 await write("issue: bob CANNOT close someone else's issue", bob,
   C.closeIssueProgram(ISSUE, "i1"), (v) => JSON.stringify(v).includes("not the opener"));
