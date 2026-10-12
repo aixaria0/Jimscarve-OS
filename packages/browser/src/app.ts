@@ -3832,7 +3832,9 @@ function handleCommand(raw: string): string[] {
                   // publish their chain addresses at their own pace, so that
                   // roll is whoever happened to have one at the moment the
                   // issue was first pushed — and anyone later could never cast.
-                  // Refreshing it is the opener's job and nobody else's.
+                  // Refreshing it is the opener's job and nobody else's — and
+                  // only until the first ballot: after that the contract keeps
+                  // the roll it has and answers "ballots cast" (#244).
                   if (iss.status !== "closed") {
                     steps.push([`refresh the roll for “${iss.title}” (${roll.length})`,
                       rgov.setRollProgram(refs.issue!, iss.id, roll)]);

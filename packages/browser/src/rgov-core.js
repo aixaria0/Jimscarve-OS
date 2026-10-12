@@ -683,15 +683,20 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
         // The roll is a SNAPSHOT the opener supplies, and "open" is idempotent,
         // so without this the electorate freezes at whoever had published a
         // chain address the moment the issue was first pushed — and anyone who
-        // publishes one later could never cast. Opener-only, and refused once
-        // the issue is closed so an electorate cannot be edited after a vote.
+        // publishes one later could never cast. Opener-only, and only until the
+        // first ballot lands: once anyone has voted the tally is visible, and an
+        // opener who could still rewrite the roll could watch it and pick the
+        // electorate that wins (quantum-os#244). Refused when locked or closed
+        // too — a frozen issue has a frozen electorate.
         ["setRoll", [iid, voters]] => {
           match s.getOrElse(iid, Nil) {
             Nil => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "no such issue", iid)) }
             i => {
-              match [i.getOrElse("by", Nil) == me, i.getOrElse("status", "open") == "closed"] {
-                [false, _] => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "not the opener", iid)) }
-                [_, true]  => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "closed", iid)) }
+              match [i.getOrElse("by", Nil) == me, i.getOrElse("status", "open"), i.getOrElse("ballots", {}) == {}] {
+                [false, _, _]  => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "not the opener", iid)) }
+                [_, "closed", _] => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "closed", iid)) }
+                [_, "locked", _] => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "locked", iid)) }
+                [_, _, false]  => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "ballots cast", iid)) }
                 _ => {
                   state!(s.set(iid, i.set("voters", voters))) | ownerIdx!(idx) |
                   ret!(("roll", iid, voters.keys().toList().length()))
@@ -1151,6 +1156,10 @@ export function selftest() {
   ok("Issue: the electorate can be refreshed after open",
      /\["setRoll", \[iid, voters\]\]/.test(ISSUE_RHO) && /"gov-error", "closed", iid/.test(ISSUE_RHO),
      "open is idempotent, so a roll set at first push would freeze the electorate");
+  ok("Issue: the electorate is frozen once a ballot exists",
+     /i\.getOrElse\("ballots", \{\}\) == \{\}/.test(ISSUE_RHO) && /"gov-error", "ballots cast", iid/.test(ISSUE_RHO)
+       && /"gov-error", "locked", iid/.test(ISSUE_RHO),
+     "an opener who can see the tally must not be able to choose the electorate (quantum-os#244)");
   ok("Inbox: send stamps the sender and does not take it",
      /msg\.set\("from", me\)/.test(INBOX_RHO));
 
