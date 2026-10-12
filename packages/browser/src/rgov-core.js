@@ -484,6 +484,23 @@ const GROUP_VERBS = `${GROUP_FOLDS}
           }
         }
 
+        // The mirror of invite, as uncensure mirrors censure. A public
+        // invitation is one the invitee can verify — not one that must stay
+        // published forever when it was a mistake, declined, or to a key that
+        // is gone (quantum-os#246). Admin-gated like invite.
+        ["uninvite", [gid, addr]] => {
+          match s.getOrElse(gid, Nil) {
+            Nil => { state!(s) | ret!(("gov-error", "no such group", gid)) }
+            g => {
+              match [g.getOrElse("admins", {}).contains(me), g.getOrElse("invited", {}).contains(addr)] {
+                [false, _] => { state!(s) | ret!(("gov-error", "not an admin", gid)) }
+                [_, false] => { state!(s) | ret!(("gov-error", "not invited", addr)) }
+                _ => { state!(s.set(gid, g.set("invited", g.get("invited").delete(addr)))) | ret!(("uninvited", gid, addr)) }
+              }
+            }
+          }
+        }
+
         ["setRole", [gid, addr, role]] => {
           match s.getOrElse(gid, Nil) {
             Nil => { state!(s) | ret!(("gov-error", "no such group", gid)) }
@@ -963,6 +980,7 @@ export const countInProgram   = (uri, addr, tag, type) => readProgram(uri, "coun
 export const createGroupProgram = (uri, gid, name, policy = "open") => writeProgram(uri, "self", "create", [q(gid), q(name), q(policy)]);
 export const joinGroupProgram   = (uri, gid, label) => writeProgram(uri, "self", "join", [q(gid), q(label)]);
 export const inviteProgram      = (uri, gid, addr) => writeProgram(uri, "self", "invite", [q(gid), q(addr)]);
+export const uninviteProgram    = (uri, gid, addr) => writeProgram(uri, "self", "uninvite", [q(gid), q(addr)]);
 export const delegateProgram    = (uri, gid, to, issueId = null) =>
   writeProgram(uri, "self", "delegate", [q(gid), q(to), issueId === null ? "Nil" : q(issueId)]);
 export const rateProgram        = (uri, gid, ratee, level) => writeProgram(uri, "self", "rate", [q(gid), q(ratee), String(Number(level))]);
@@ -1183,6 +1201,10 @@ export function selftest() {
   ok("Group: onboarding works in both directions",
      /\["join", \[gid, label\]\]/.test(GROUP_RHO) && /\["invite", \[gid, addr\]\]/.test(GROUP_RHO),
      "requirement 5 — neither direction may require the other to have happened");
+  ok("Group: an invitation can be withdrawn, by an admin",
+     /\["uninvite", \[gid, addr\]\] => \{[\s\S]*?getOrElse\("admins", \{\}\)\.contains\(me\)[\s\S]*?\.delete\(addr\)/.test(GROUP_RHO)
+       && /"uninvite", \["g2", "1111bob"\]/.test(uninviteProgram(URI, "g2", "1111bob")),
+     "otherwise a mistaken invitation stays published forever (quantum-os#246)");
   // A comment may NAME the native; binding one would mean the contract counts.
   ok("Issue: no contract counts votes",
      !/`rho:gov:/.test(ISSUE_RHO) && /\["propose", \[iid, result\]\]/.test(ISSUE_RHO),

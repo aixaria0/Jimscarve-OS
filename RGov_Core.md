@@ -225,6 +225,7 @@ groups: { <groupId>: {
 | `self` | `rate(deployerId, groupId, rateeAddr, level, ret)` | own row only; stored **raw** |
 | `self` | `censure(deployerId, groupId, targetAddr, on, ret)` | own row only |
 | `admin` | `invite(deployerId, groupId, addr, ret)` | the **push** path — returns a one-shot `acceptOne` cap for the inbox |
+| `admin` | `uninvite(deployerId, groupId, addr, ret)` | withdraw an invitation not yet taken up — the mirror of `invite`, as `uncensure` mirrors `censure` ([#246](https://github.com/rchain-community/quantum-os/issues/246)) |
 | `admin` | `setRole(deployerId, groupId, addr, role, ret)` | |
 | `read` | `ratingsOf(groupId, ret)` | → `trustLevels` arg 1 |
 | `read` | `adminsOf(groupId, ret)` | → `trustLevels` arg 2 |
