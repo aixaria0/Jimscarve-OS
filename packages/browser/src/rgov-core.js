@@ -500,7 +500,14 @@ const GROUP_VERBS = `${GROUP_FOLDS}
                     let @admins <- g.getOrElse("admins", {}) in {
                       match role == "admin" {
                         true  => { state!(s.set(gid, g.set("members", members).set("admins", admins.set(addr, true)))) | ret!(("role", gid, addr, role)) }
-                        false => { state!(s.set(gid, g.set("members", members).set("admins", admins.delete(addr)))) | ret!(("role", gid, addr, role)) }
+                        // Demoting the last admin would strand the group: nobody
+                        // left could invite or promote (rhogov#75 item 4).
+                        false => {
+                          match admins.delete(addr) == {} {
+                            true  => { state!(s) | ret!(("gov-error", "last admin", gid)) }
+                            false => { state!(s.set(gid, g.set("members", members).set("admins", admins.delete(addr)))) | ret!(("role", gid, addr, role)) }
+                          }
+                        }
                       }
                     }
                   }
@@ -513,11 +520,19 @@ const GROUP_VERBS = `${GROUP_FOLDS}
         ["leave", [gid]] => {
           match s.getOrElse(gid, Nil) {
             Nil => { state!(s) | ret!(("gov-error", "no such group", gid)) }
+            // The last admin may not leave while anyone else remains — promote
+            // someone first. A group's last MEMBER may always leave.
             g => {
-              state!(s.set(gid, g.set("members", g.getOrElse("members", {}).delete(me))
-                             .set("admins", g.getOrElse("admins", {}).delete(me))
-                             .set("deleg", g.getOrElse("deleg", {}).delete(me)))) |
-              ret!(("left", gid, me))
+              match [(g.getOrElse("admins", {}).delete(me) == {}) and g.getOrElse("admins", {}).contains(me),
+                     g.getOrElse("members", {}).delete(me) == {}] {
+                [true, false] => { state!(s) | ret!(("gov-error", "last admin", gid)) }
+                _ => {
+                  state!(s.set(gid, g.set("members", g.getOrElse("members", {}).delete(me))
+                                 .set("admins", g.getOrElse("admins", {}).delete(me))
+                                 .set("deleg", g.getOrElse("deleg", {}).delete(me)))) |
+                  ret!(("left", gid, me))
+                }
+              }
             }
           }
         }
@@ -1183,6 +1198,9 @@ export function selftest() {
   ok("Group: onboarding works in both directions",
      /\["join", \[gid, label\]\]/.test(GROUP_RHO) && /\["invite", \[gid, addr\]\]/.test(GROUP_RHO),
      "requirement 5 — neither direction may require the other to have happened");
+  ok("Group: the last admin can be neither demoted nor leave while others remain",
+     (GROUP_RHO.match(/"gov-error", "last admin", gid/g) || []).length === 2,
+     "a group with no admin can never invite or promote again (rhogov#75)");
   // A comment may NAME the native; binding one would mean the contract counts.
   ok("Issue: no contract counts votes",
      !/`rho:gov:/.test(ISSUE_RHO) && /\["propose", \[iid, result\]\]/.test(ISSUE_RHO),

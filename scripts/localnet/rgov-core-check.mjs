@@ -303,7 +303,18 @@ await write("group: alice invites bob to g2", alice, C.inviteProgram(GROUP, "g2"
   (v) => JSON.stringify(v).includes("invited"));
 await write("group: now bob can join g2", bob, C.joinGroupProgram(GROUP, "g2", "Bob"),
   (v) => JSON.stringify(v).includes("joined"));
+// The last admin guard (rhogov#75 item 4): g2 has one admin, alice, and a member, bob.
+await write("group: the last admin cannot demote herself", alice,
+  C.writeProgram(GROUP, "self", "setRole", ['"g2"', JSON.stringify(A), '"member"']),
+  (v) => JSON.stringify(v).includes("last admin"));
+await write("group: the last admin cannot leave while bob remains", alice,
+  C.writeProgram(GROUP, "self", "leave", ['"g2"']),
+  (v) => JSON.stringify(v).includes("last admin"));
+await read("group: g2 still has its admin", C.adminsOfProgram(GROUP, "g2"),
+  (v) => Array.isArray(v[0]) && v[0].includes(A));
 await write("group: bob leaves g2", bob, C.writeProgram(GROUP, "self", "leave", ['"g2"']),
+  (v) => JSON.stringify(v).includes("left"));
+await write("group: the last MEMBER may always leave", alice, C.writeProgram(GROUP, "self", "leave", ['"g2"']),
   (v) => JSON.stringify(v).includes("left"));
 
 // ── Issue: the rest, including the bearer ballot ────────────────────────────
