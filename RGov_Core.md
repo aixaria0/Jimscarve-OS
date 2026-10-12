@@ -252,7 +252,7 @@ issues: { <issueId>: {
   "groupRead": <proc>,                       // the Group read facet this issue trusts
   "options": [ <optionId>, … ],
   "ballots": { <addr>: [ <optionId>, … ] },
-  "results": { <addr>: <result> }            // proposed tallies, by proposer
+  "results": { <addr>: <result> }            // the opener's proposed tally, keyed by their address
 } }
 ```
 
@@ -261,7 +261,7 @@ issues: { <issueId>: {
 | `self` | `open(deployerId, groupId, issueId, title, mode, options, groupRead, ret)` | idempotent |
 | `self` | `addOption(deployerId, issueId, optionId, ret)` | while `open` |
 | `self` | `cast(deployerId, issueId, choices, ret)` | membership checked through `groupRead`; latest ballot per voter wins |
-| `self` | `propose(deployerId, issueId, result, ret)` | record a computed tally under the proposer's name |
+| `self` | `propose(deployerId, issueId, result, ret)` | **opener only** — record the computed tally under the opener's name ([#245](https://github.com/rchain-community/quantum-os/issues/245)) |
 | `admin` | `enroll(deployerId, issueId, addr, ret)` | returns a `castOne` cap bound to (issue, voter) — for the inbox |
 | `admin` | `lock` / `close(deployerId, issueId, ret)` | freeze options / freeze ballots |
 | `read` | `ballotsOf(issueId, ret)` | → `tally` arg 1 |
@@ -269,9 +269,11 @@ issues: { <issueId>: {
 | `admin` | `dump` / `load` / `version` | migration; `load` refuses a non-empty cell |
 
 **No contract counts votes.** `tally` is the node's, deterministic over published ballots and
-published weights, so anyone can recompute it. `propose` therefore records results *keyed by who
-proposed them* rather than blessing one — the ballots are the authoritative state, a result is a
-claim about them, and disagreement is visible instead of arbitrated. This is the same stance
+published weights, so anyone can recompute it. `propose` records the opener's claim about the
+ballots, keyed by their address, and refuses anyone else: an ungated `propose` let any member post a
+second "result" of the same shape, with nothing on chain saying which was the record (#245). The
+ballots are the authoritative state; a reader who disagrees recomputes the tally from them rather
+than writing a rival result. This is the same stance
 `polls.ts` takes in the room ("deterministic and joiner-local — no central counter").
 
 **`open` takes the Group read facet it trusts** and records it. That is one cross-contract edge,
