@@ -840,7 +840,7 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
     }
   } |`;
 
-export const ISSUE_RHO = preamble("Issue/3")
+export const ISSUE_RHO = preamble("Issue/4")
   .replace("HELPERS\n", "")
   .replace("new state, ownerCh,", "new state, ownerIdx, ownerCh,")
   .replace("state!({}) |", "state!({}) | ownerIdx!({}) |")
