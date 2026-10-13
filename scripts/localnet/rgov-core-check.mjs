@@ -439,7 +439,7 @@ await write("admin: alice can dump", alice, C.dumpProgram(GROUP),
 await write("admin: load refuses a non-empty cell", alice, C.loadProgram(GROUP, "{}"),
   (v) => JSON.stringify(v).includes("not empty"));
 await write("admin: version", alice, C.writeProgram(GROUP, "admin", "version", [], { asAdmin: true }),
-  (v) => JSON.stringify(v).includes("Group/3"));
+  (v) => JSON.stringify(v).includes("Group/4"));
 
 // ── the natives read what the contracts wrote ────────────────────────────────
 const rl = (x) => JSON.stringify(x);

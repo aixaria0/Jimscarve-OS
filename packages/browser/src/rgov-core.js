@@ -656,7 +656,7 @@ const GROUP_VERBS = `${GROUP_FOLDS}
     }
   } |`;
 
-export const GROUP_RHO = preamble("Group/3").replace("HELPERS", GROUP_HELPERS).replace("VERBS", GROUP_VERBS);
+export const GROUP_RHO = preamble("Group/4").replace("HELPERS", GROUP_HELPERS).replace("VERBS", GROUP_VERBS);
 
 // ---------------------------------------------------------------------------
 // 3. Issue — proposals and ballots
