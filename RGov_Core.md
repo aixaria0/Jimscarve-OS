@@ -226,7 +226,8 @@ groups: { <groupId>: {
 | `self` | `censure(deployerId, groupId, targetAddr, on, ret)` | own row only |
 | `admin` | `invite(deployerId, groupId, addr, ret)` | the **push** path — returns a one-shot `acceptOne` cap for the inbox |
 | `admin` | `uninvite(deployerId, groupId, addr, ret)` | withdraw an invitation not yet taken up — the mirror of `invite`, as `uncensure` mirrors `censure` ([#246](https://github.com/rchain-community/quantum-os/issues/246)) |
-| `admin` | `setRole(deployerId, groupId, addr, role, ret)` | |
+| `admin` | `setRole(deployerId, groupId, addr, role, ret)` | refuses to demote the **last admin** — a group with none can never invite or promote again ([rhogov#75](https://github.com/rchain-community/rhogov/issues/75)) |
+| `self` | `leave(deployerId, groupId, ret)` | the last admin cannot leave while other members remain; the last member always can |
 | `read` | `ratingsOf(groupId, ret)` | → `trustLevels` arg 1 |
 | `read` | `adminsOf(groupId, ret)` | → `trustLevels` arg 2 |
 | `read` | `delegationsOf(groupId, issueId, ret)` | → `resolveWeights` arg 2, topic over standing |
