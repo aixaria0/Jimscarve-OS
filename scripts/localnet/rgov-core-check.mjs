@@ -340,6 +340,11 @@ await write("issue: a non-opener cannot refresh it", bob,
   (v) => JSON.stringify(v).includes("not the opener"));
 await read("issue: the new roll took", C.readProgram(ISSUE, "votersOf", ['"i1"']),
   (v) => v[0]?.length === 3);
+// The roll stays editable after ballots, but never quietly (quantum-os#244):
+// each change is logged with how many ballots had been cast before it.
+await read("issue: the roll change is logged, with the ballots already cast",
+  C.readProgram(ISSUE, "rollLogOf", ['"i1"']),
+  (v) => Array.isArray(v[0]) && v[0].length === 1 && v[0][0].voters === 3 && v[0][0].ballotsBefore === 2);
 
 await write("issue: bob CANNOT close someone else's issue", bob,
   C.closeIssueProgram(ISSUE, "i1"), (v) => JSON.stringify(v).includes("not the opener"));

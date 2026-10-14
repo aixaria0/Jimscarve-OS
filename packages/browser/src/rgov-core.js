@@ -685,6 +685,14 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
         // chain address the moment the issue was first pushed — and anyone who
         // publishes one later could never cast. Opener-only, and refused once
         // the issue is closed so an electorate cannot be edited after a vote.
+        //
+        // Open until close BY DESIGN — people join while an issue is open, and
+        // freezing the roll at the first ballot would close the vote to them
+        // early. What the opener cannot do is change it quietly: every change
+        // is appended to the issue's public "rollLog" with the size of the new
+        // roll and how many ballots had already been cast, so a roll edited
+        // after voting began is visible to anyone reading the issue
+        // (quantum-os#244).
         ["setRoll", [iid, voters]] => {
           match s.getOrElse(iid, Nil) {
             Nil => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "no such issue", iid)) }
@@ -693,8 +701,14 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
                 [false, _] => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "not the opener", iid)) }
                 [_, true]  => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "closed", iid)) }
                 _ => {
-                  state!(s.set(iid, i.set("voters", voters))) | ownerIdx!(idx) |
-                  ret!(("roll", iid, voters.keys().toList().length()))
+                  let @log <- i.getOrElse("rollLog", []) in {
+                    let @entry <- {"seq": log.length() + 1,
+                                   "voters": voters.keys().toList().length(),
+                                   "ballotsBefore": i.getOrElse("ballots", {}).keys().toList().length()} in {
+                      state!(s.set(iid, i.set("voters", voters).set("rollLog", log ++ [entry]))) | ownerIdx!(idx) |
+                      ret!(("roll", iid, voters.keys().toList().length(), entry.get("ballotsBefore")))
+                    }
+                  }
                 }
               }
             }
@@ -817,6 +831,7 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
         ["statusOf",  [iid]] => { ret!(s.getOrElse(iid, {}).getOrElse("status", Nil)) }
         ["modeOf",    [iid]] => { ret!(s.getOrElse(iid, {}).getOrElse("mode", Nil)) }
         ["resultsOf", [iid]] => { ret!(s.getOrElse(iid, {}).getOrElse("results", {})) }
+        ["rollLogOf", [iid]] => { ret!(s.getOrElse(iid, {}).getOrElse("rollLog", [])) }
         ["issueOf",   [iid]] => { ret!(s.getOrElse(iid, Nil)) }
         ["issuesOf",  [gid]] => { ret!(idx.getOrElse(gid, [])) }
         ["issues", []]       => { ret!(s.keys().toList()) }
@@ -825,7 +840,7 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
     }
   } |`;
 
-export const ISSUE_RHO = preamble("Issue/3")
+export const ISSUE_RHO = preamble("Issue/4")
   .replace("HELPERS\n", "")
   .replace("new state, ownerCh,", "new state, ownerIdx, ownerCh,")
   .replace("state!({}) |", "state!({}) | ownerIdx!({}) |")
@@ -1151,6 +1166,10 @@ export function selftest() {
   ok("Issue: the electorate can be refreshed after open",
      /\["setRoll", \[iid, voters\]\]/.test(ISSUE_RHO) && /"gov-error", "closed", iid/.test(ISSUE_RHO),
      "open is idempotent, so a roll set at first push would freeze the electorate");
+  ok("Issue: every roll change is logged publicly, with the ballots already cast",
+     /\.set\("rollLog", log \+\+ \[entry\]\)/.test(ISSUE_RHO) && /"ballotsBefore"/.test(ISSUE_RHO)
+       && /\["rollLogOf", \[iid\]\]/.test(ISSUE_RHO),
+     "a roll edited after voting began must be visible, not quiet (quantum-os#244)");
   ok("Inbox: send stamps the sender and does not take it",
      /msg\.set\("from", me\)/.test(INBOX_RHO));
 
