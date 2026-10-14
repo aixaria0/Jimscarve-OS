@@ -3900,6 +3900,13 @@ function handleCommand(raw: string): string[] {
               // rather than every one, so a long-lived group still prints.
               for (const iss of g.issues.slice(0, 5)) {
                 await one(iss.id.slice(0, 12), rgov.ballotsOfProgram(refs.issue!, iss.id));
+                // The roll stays editable until close, so say when it was
+                // changed after voting began rather than leave it to a reader
+                // to diff votersOf against what it was (#244).
+                const log = await evalTerm(cfg, rgov.readProgram(refs.issue!, "rollLogOf", [JSON.stringify(iss.id)]));
+                const before = [...log.values.join(" ").matchAll(/"ballotsBefore": (\d+)/g)].map((m) => Number(m[1]));
+                const late = before.filter((n) => n > 0).length;
+                if (late) say(`  ⚠ ${iss.id.slice(0, 12)} voter list updated ${late} time${late === 1 ? "" : "s"} after voting began (${Math.max(...before)} ballots in)`);
               }
             }
             say("  (a report, not a merge — the room's own state is untouched)");

@@ -303,7 +303,34 @@ await write("group: alice invites bob to g2", alice, C.inviteProgram(GROUP, "g2"
   (v) => JSON.stringify(v).includes("invited"));
 await write("group: now bob can join g2", bob, C.joinGroupProgram(GROUP, "g2", "Bob"),
   (v) => JSON.stringify(v).includes("joined"));
+// The last admin guard (rhogov#75 item 4): g2 has one admin, alice, and a member, bob.
+await write("group: the last admin cannot demote herself", alice,
+  C.writeProgram(GROUP, "self", "setRole", ['"g2"', JSON.stringify(A), '"member"']),
+  (v) => JSON.stringify(v).includes("last admin"));
+await write("group: the last admin cannot leave while bob remains", alice,
+  C.writeProgram(GROUP, "self", "leave", ['"g2"']),
+  (v) => JSON.stringify(v).includes("last admin"));
+await read("group: g2 still has its admin", C.adminsOfProgram(GROUP, "g2"),
+  (v) => Array.isArray(v[0]) && v[0].includes(A));
 await write("group: bob leaves g2", bob, C.writeProgram(GROUP, "self", "leave", ['"g2"']),
+  (v) => JSON.stringify(v).includes("left"));
+
+// An invitation can be withdrawn (quantum-os#246): a mistaken one must not stay
+// published forever.
+const carolKey = keyOf("carol"), C3 = revAddressOf(carolKey);
+await write("group: alice invites carol to g2", alice, C.inviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("invited"));
+await write("group: bob (not a g2 admin) CANNOT withdraw it", bob, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("not an admin"));
+await write("group: alice withdraws carol's invitation", alice, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("uninvited"));
+await read("group: carol is no longer published as invited", C.readProgram(GROUP, "invitedOf", ['"g2"']),
+  (v) => Array.isArray(v[0]) && !v[0].includes(C3));
+await write("group: carol cannot join on a withdrawn invitation", carolKey, C.joinGroupProgram(GROUP, "g2", "Carol"),
+  (v) => JSON.stringify(v).includes("not invited"));
+await write("group: withdrawing an invitation that is not there says so", alice, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("not invited"));
+await write("group: the last MEMBER may always leave", alice, C.writeProgram(GROUP, "self", "leave", ['"g2"']),
   (v) => JSON.stringify(v).includes("left"));
 
 // ── Issue: the rest, including the bearer ballot ────────────────────────────
@@ -340,14 +367,22 @@ await write("issue: a non-opener cannot refresh it", bob,
   (v) => JSON.stringify(v).includes("not the opener"));
 await read("issue: the new roll took", C.readProgram(ISSUE, "votersOf", ['"i1"']),
   (v) => v[0]?.length === 3);
+// The roll stays editable after ballots, but never quietly (quantum-os#244):
+// each change is logged with how many ballots had been cast before it.
+await read("issue: the roll change is logged, with the ballots already cast",
+  C.readProgram(ISSUE, "rollLogOf", ['"i1"']),
+  (v) => Array.isArray(v[0]) && v[0].length === 1 && v[0][0].voters === 3 && v[0][0].ballotsBefore === 2);
 
 await write("issue: bob CANNOT close someone else's issue", bob,
   C.closeIssueProgram(ISSUE, "i1"), (v) => JSON.stringify(v).includes("not the opener"));
+await write("issue: bob CANNOT post a result on alice's issue", bob,
+  C.writeProgram(ISSUE, "self", "propose", ['"i1"', '"no"']),
+  (v) => JSON.stringify(v).includes("not the opener"));
 await write("issue: alice records a proposed tally", alice,
   C.writeProgram(ISSUE, "self", "propose", ['"i1"', '"yes"']),
   (v) => JSON.stringify(v).includes("proposed"));
 await read("issue: the result is keyed by who proposed it",
-  C.readProgram(ISSUE, "resultsOf", ['"i1"']), (v) => v[0]?.[A] === "yes");
+  C.readProgram(ISSUE, "resultsOf", ['"i1"']), (v) => v[0]?.[A] === "yes" && Object.keys(v[0]).length === 1);
 await write("issue: alice closes it", alice, C.closeIssueProgram(ISSUE, "i1"),
   (v) => JSON.stringify(v).includes("closed"));
 await write("issue: a closed issue refuses a ballot", bob, C.castProgram(ISSUE, "i1", ["yes"]),
@@ -423,7 +458,7 @@ await write("admin: alice can dump", alice, C.dumpProgram(GROUP),
 await write("admin: load refuses a non-empty cell", alice, C.loadProgram(GROUP, "{}"),
   (v) => JSON.stringify(v).includes("not empty"));
 await write("admin: version", alice, C.writeProgram(GROUP, "admin", "version", [], { asAdmin: true }),
-  (v) => JSON.stringify(v).includes("Group/3"));
+  (v) => JSON.stringify(v).includes("Group/4"));
 
 // ── the natives read what the contracts wrote ────────────────────────────────
 const rl = (x) => JSON.stringify(x);
