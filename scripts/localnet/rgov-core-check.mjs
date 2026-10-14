@@ -306,6 +306,22 @@ await write("group: now bob can join g2", bob, C.joinGroupProgram(GROUP, "g2", "
 await write("group: bob leaves g2", bob, C.writeProgram(GROUP, "self", "leave", ['"g2"']),
   (v) => JSON.stringify(v).includes("left"));
 
+// An invitation can be withdrawn (quantum-os#246): a mistaken one must not stay
+// published forever.
+const carolKey = keyOf("carol"), C3 = revAddressOf(carolKey);
+await write("group: alice invites carol to g2", alice, C.inviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("invited"));
+await write("group: bob (not a g2 admin) CANNOT withdraw it", bob, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("not an admin"));
+await write("group: alice withdraws carol's invitation", alice, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("uninvited"));
+await read("group: carol is no longer published as invited", C.readProgram(GROUP, "invitedOf", ['"g2"']),
+  (v) => Array.isArray(v[0]) && !v[0].includes(C3));
+await write("group: carol cannot join on a withdrawn invitation", carolKey, C.joinGroupProgram(GROUP, "g2", "Carol"),
+  (v) => JSON.stringify(v).includes("not invited"));
+await write("group: withdrawing an invitation that is not there says so", alice, C.uninviteProgram(GROUP, "g2", C3),
+  (v) => JSON.stringify(v).includes("not invited"));
+
 // ── Issue: the rest, including the bearer ballot ────────────────────────────
 await write("issue: alice adds an option", alice,
   C.writeProgram(ISSUE, "self", "addOption", ['"i1"', '"maybe"']),
@@ -431,7 +447,7 @@ await write("admin: alice can dump", alice, C.dumpProgram(GROUP),
 await write("admin: load refuses a non-empty cell", alice, C.loadProgram(GROUP, "{}"),
   (v) => JSON.stringify(v).includes("not empty"));
 await write("admin: version", alice, C.writeProgram(GROUP, "admin", "version", [], { asAdmin: true }),
-  (v) => JSON.stringify(v).includes("Group/3"));
+  (v) => JSON.stringify(v).includes("Group/4"));
 
 // ── the natives read what the contracts wrote ────────────────────────────────
 const rl = (x) => JSON.stringify(x);
