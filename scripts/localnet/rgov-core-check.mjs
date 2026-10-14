@@ -348,11 +348,14 @@ await read("issue: the roll change is logged, with the ballots already cast",
 
 await write("issue: bob CANNOT close someone else's issue", bob,
   C.closeIssueProgram(ISSUE, "i1"), (v) => JSON.stringify(v).includes("not the opener"));
+await write("issue: bob CANNOT post a result on alice's issue", bob,
+  C.writeProgram(ISSUE, "self", "propose", ['"i1"', '"no"']),
+  (v) => JSON.stringify(v).includes("not the opener"));
 await write("issue: alice records a proposed tally", alice,
   C.writeProgram(ISSUE, "self", "propose", ['"i1"', '"yes"']),
   (v) => JSON.stringify(v).includes("proposed"));
 await read("issue: the result is keyed by who proposed it",
-  C.readProgram(ISSUE, "resultsOf", ['"i1"']), (v) => v[0]?.[A] === "yes");
+  C.readProgram(ISSUE, "resultsOf", ['"i1"']), (v) => v[0]?.[A] === "yes" && Object.keys(v[0]).length === 1);
 await write("issue: alice closes it", alice, C.closeIssueProgram(ISSUE, "i1"),
   (v) => JSON.stringify(v).includes("closed"));
 await write("issue: a closed issue refuses a ballot", bob, C.castProgram(ISSUE, "i1", ["yes"]),

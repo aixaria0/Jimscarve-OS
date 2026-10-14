@@ -652,10 +652,11 @@ export const GROUP_RHO = preamble("Group/3").replace("HELPERS", GROUP_HELPERS).r
 //                                        issues is a lookup rather than a fold
 //
 // NO CONTRACT COUNTS VOTES. `rho:gov:tally` is deterministic over published
-// ballots and published weights, so anyone can recompute the result — which is
-// why `propose` records a result KEYED BY WHO PROPOSED IT rather than blessing
-// one. The ballots are the authoritative state; a result is a claim about them,
-// and a disagreement is visible instead of arbitrated. Same stance polls.ts
+// ballots and published weights, so anyone can recompute the result. `propose`
+// records the OPENER's claim about the ballots, keyed by their address — the
+// one record of the vote, never a second voice beside it (#245). The ballots
+// are the authoritative state; a result is a claim about them, and a reader who
+// disagrees recomputes it rather than writing a rival one. Same stance polls.ts
 // takes in the room: deterministic and joiner-local, no central counter.
 //
 // The voter roll is a SNAPSHOT the opener supplies, read from Group. That is
@@ -780,12 +781,22 @@ const ISSUE_VERBS = `contract doSelf(@me, @verb, @args, ret) = {
           }
         }
 
+        // Opener-only, like close and setRoll. An ungated propose let any
+        // member write a "result" on any issue, indistinguishable in shape from
+        // the opener's, with nothing on chain saying which was the record
+        // (quantum-os#245). Anyone can still disagree — by recomputing the
+        // tally from ballotsOf, which is the authoritative state.
         ["propose", [iid, result]] => {
           match s.getOrElse(iid, Nil) {
             Nil => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "no such issue", iid)) }
             i => {
-              state!(s.set(iid, i.set("results", i.getOrElse("results", {}).set(me, result)))) |
-              ownerIdx!(idx) | ret!(("proposed", iid, me))
+              match i.getOrElse("by", Nil) == me {
+                false => { state!(s) | ownerIdx!(idx) | ret!(("gov-error", "not the opener", iid)) }
+                true  => {
+                  state!(s.set(iid, i.set("results", i.getOrElse("results", {}).set(me, result)))) |
+                  ownerIdx!(idx) | ret!(("proposed", iid, me))
+                }
+              }
             }
           }
         }
@@ -1206,6 +1217,9 @@ export function selftest() {
   ok("Issue: no contract counts votes",
      !/`rho:gov:/.test(ISSUE_RHO) && /\["propose", \[iid, result\]\]/.test(ISSUE_RHO),
      "a result is a claim about the ballots, keyed by who claimed it");
+  ok("Issue: only the opener can propose the result",
+     /\["propose", \[iid, result\]\] => \{\s*match s\.getOrElse\(iid, Nil\) \{[\s\S]*?getOrElse\("by", Nil\) == me[\s\S]*?"not the opener"/.test(ISSUE_RHO),
+     "an ungated propose let any member post a rival result (quantum-os#245)");
 
   // --- install programs ----------------------------------------------------
   for (const [name, prog] of Object.entries({
